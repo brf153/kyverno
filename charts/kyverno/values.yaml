@@ -18,6 +18,9 @@ global:
   # -- Resync period for informers
   resyncPeriod: 15m
 
+  # -- Enable/Disable custom resource watcher to invalidate cache
+  crdWatcher: false
+
   caCertificates:
     # -- Global CA certificates to use with Kyverno deployments
     # This value is expected to be one large string of CA certificates
@@ -843,6 +846,9 @@ admissionController:
   # -- Resync period for informers
   resyncPeriod: 15m
 
+  # -- Enable/Disable custom resource watcher to invalidate cache
+  crdWatcher: false
+
   # -- Additional labels to add to each pod
   podLabels: {}
     # example.com/label: foo
@@ -996,6 +1002,9 @@ admissionController:
     # -- Configures the maximum unavailable pods for disruptions.
     # Cannot be used if `minAvailable` is set.
     maxUnavailable:
+    # -- Unhealty pod eviction policy to be used.
+    # Possible values are `IfHealthyBudget` or `AlwaysAllow`.
+    unhealthyPodEvictionPolicy:
 
   # -- A writable volume to use for the TUF root initialization.
   tufRootMountPath: /.sigstore
@@ -1430,6 +1439,9 @@ backgroundController:
     # -- Configures the maximum unavailable pods for disruptions.
     # Cannot be used if `minAvailable` is set.
     maxUnavailable:
+    # -- Unhealty pod eviction policy to be used.
+    # Possible values are `IfHealthyBudget` or `AlwaysAllow`.
+    unhealthyPodEvictionPolicy:
 
   caCertificates:
     # -- CA certificates to use with Kyverno deployments
@@ -1756,6 +1768,9 @@ cleanupController:
     # -- Configures the maximum unavailable pods for disruptions.
     # Cannot be used if `minAvailable` is set.
     maxUnavailable:
+    # -- Unhealty pod eviction policy to be used.
+    # Possible values are `IfHealthyBudget` or `AlwaysAllow`.
+    unhealthyPodEvictionPolicy:
 
   service:
     # -- Service port.
@@ -2046,6 +2061,9 @@ reportsController:
     # -- Configures the maximum unavailable pods for disruptions.
     # Cannot be used if `minAvailable` is set.
     maxUnavailable:
+    # -- Unhealty pod eviction policy to be used.
+    # Possible values are `IfHealthyBudget` or `AlwaysAllow`.
+    unhealthyPodEvictionPolicy:
 
   # -- A writable volume to use for the TUF root initialization.
   tufRootMountPath: /.sigstore
