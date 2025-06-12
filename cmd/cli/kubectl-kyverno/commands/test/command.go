@@ -84,6 +84,8 @@ func testCommandExecute(
 			return fmt.Errorf("invalid format, expected (json, yaml, markdown, junit)")
 		}
 	}
+	// fetch resource filters
+	resourceFilters := filter.ExtractResourceFilters(testCase)
 	// parse filter
 	filter, errors := filter.ParseFilter(testCase)
 	if len(errors) > 0 {
@@ -133,6 +135,9 @@ func testCommandExecute(
 			var filteredResults []v1alpha1.TestResult
 			for _, res := range test.Test.Results {
 				if filter.Apply(res) {
+					if len(resourceFilters) > 0 {
+						res.Resources = resourceFilters
+					}
 					filteredResults = append(filteredResults, res)
 				}
 			}
@@ -223,7 +228,7 @@ func checkResult(test v1alpha1.TestResult, fs billy.Filesystem, resoucePath stri
 func lookupRuleResponses(test v1alpha1.TestResult, responses ...engineapi.RuleResponse) []engineapi.RuleResponse {
 	var matches []engineapi.RuleResponse
 	// Since there are no rules in case of validating admission policies, responses are returned without checking rule names.
-	if test.IsValidatingAdmissionPolicy || test.IsValidatingPolicy || test.IsImageValidatingPolicy {
+	if test.IsValidatingAdmissionPolicy || test.IsValidatingPolicy || test.IsImageValidatingPolicy || test.IsMutatingAdmissionPolicy || test.IsDeletingPolicy {
 		matches = responses
 	} else {
 		for _, response := range responses {
