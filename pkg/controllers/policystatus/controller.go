@@ -2,11 +2,13 @@ package policystatus
 
 import (
 	"context"
+	baseerrors "errors"
 	"fmt"
 	"time"
 
 	"github.com/go-logr/logr"
 	policiesv1alpha1 "github.com/kyverno/kyverno/api/policies.kyverno.io/v1alpha1"
+	"github.com/kyverno/kyverno/pkg/auth/checker"
 	auth "github.com/kyverno/kyverno/pkg/auth/checker"
 	"github.com/kyverno/kyverno/pkg/client/clientset/versioned"
 	policiesv1alpha1informers "github.com/kyverno/kyverno/pkg/client/informers/externalversions/policies.kyverno.io/v1alpha1"
@@ -41,7 +43,15 @@ type controller struct {
 	vpolStateRecorder webhook.StateRecorder
 }
 
-func NewController(dclient dclient.Interface, client versioned.Interface, vpolInformer policiesv1alpha1informers.ValidatingPolicyInformer, ivpolInformer policiesv1alpha1informers.ImageValidatingPolicyInformer, reportsSA string, vpolStateRecorder webhook.StateRecorder) Controller {
+func NewController(
+	dclient dclient.Interface,
+	client versioned.Interface,
+	vpolInformer policiesv1alpha1informers.ValidatingPolicyInformer,
+	ivpolInformer policiesv1alpha1informers.ImageValidatingPolicyInformer,
+	gpolInformer policiesv1alpha1informers.GeneratingPolicyInformer,
+	reportsSA string,
+	vpolStateRecorder webhook.StateRecorder,
+) Controller {
 	c := &controller{
 		dclient: dclient,
 		client:  client,
@@ -94,6 +104,22 @@ func NewController(dclient dclient.Interface, client versioned.Interface, vpolIn
 	if err != nil {
 		logger.Error(err, "failed to register event handlers for ImageValidatingPolicy")
 	}
+
+	_, _, err = controllerutils.AddExplicitEventHandlers(
+		logger,
+		gpolInformer.Informer(),
+		c.queue,
+		func(obj interface{}) cache.ExplicitKey {
+			gpol, ok := obj.(*policiesv1alpha1.GeneratingPolicy)
+			if !ok {
+				return ""
+			}
+			return cache.ExplicitKey(webhook.BuildRecorderKey(webhook.GeneratingPolicyType, gpol.Name))
+		},
+	)
+	if err != nil {
+		logger.Error(err, "failed to register event handlers for GeneratingPolicy")
+	}
 	return c
 }
 
@@ -133,6 +159,17 @@ func (c controller) reconcile(ctx context.Context, logger logr.Logger, key strin
 		}
 		return c.updateIvpolStatus(ctx, ivpol)
 	}
+	if polType == webhook.GeneratingPolicyType {
+		gpol, err := c.client.PoliciesV1alpha1().GeneratingPolicies().Get(ctx, polName, metav1.GetOptions{})
+		if err != nil {
+			if errors.IsNotFound(err) {
+				logger.V(4).Info("generating policy not found", "name", polName)
+				return nil
+			}
+			return err
+		}
+		return c.updateGpolStatus(ctx, gpol)
+	}
 	return nil
 }
 
@@ -150,6 +187,10 @@ func (c controller) reconcileConditions(ctx context.Context, policy engineapi.Ge
 		key = webhook.BuildRecorderKey(webhook.ImageValidatingPolicy, policy.GetName())
 		matchConstraints = policy.AsImageValidatingPolicy().GetMatchConstraints()
 		backgroundOnly = (!policy.AsImageValidatingPolicy().GetSpec().AdmissionEnabled() && policy.AsImageValidatingPolicy().GetSpec().BackgroundEnabled())
+	case webhook.GeneratingPolicyType:
+		key = webhook.BuildRecorderKey(webhook.GeneratingPolicyType, policy.GetName())
+		matchConstraints = policy.AsGeneratingPolicy().GetMatchConstraints()
+		backgroundOnly = (!policy.AsGeneratingPolicy().GetSpec().AdmissionEnabled() && policy.AsGeneratingPolicy().GetSpec().BackgroundEnabled())
 	}
 
 	if !backgroundOnly {
@@ -179,7 +220,9 @@ func (c controller) reconcileConditions(ctx context.Context, policy engineapi.Ge
 	for _, gvr := range gvrs {
 		for _, verb := range []string{"get", "list", "watch"} {
 			result, err := c.authChecker.Check(ctx, gvr.Group, gvr.Version, gvr.Resource, "", "", "", verb)
-			if err != nil {
+			if baseerrors.Is(err, checker.ErrNoServiceAccount) {
+				continue
+			} else if err != nil {
 				errs = append(errs, err)
 			} else if !result.Allowed {
 				errs = append(errs, fmt.Errorf("%s %s: %s", verb, gvr.String(), result.Reason))
