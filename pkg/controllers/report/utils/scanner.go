@@ -24,6 +24,7 @@ import (
 	"go.uber.org/multierr"
 	admissionv1 "k8s.io/api/admission/v1"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
+	admissionregistrationv1alpha1 "k8s.io/api/admissionregistration/v1alpha1"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -52,6 +53,7 @@ type Scanner interface {
 		string,
 		*corev1.Namespace,
 		[]admissionregistrationv1.ValidatingAdmissionPolicyBinding,
+		[]admissionregistrationv1alpha1.MutatingAdmissionPolicyBinding,
 		[]*policiesv1alpha1.PolicyException,
 		...engineapi.GenericPolicy,
 	) map[*engineapi.GenericPolicy]ScanResult
@@ -81,11 +83,12 @@ func (s *scanner) ScanResource(
 	gvr schema.GroupVersionResource,
 	subResource string,
 	ns *corev1.Namespace,
-	bindings []admissionregistrationv1.ValidatingAdmissionPolicyBinding,
+	vapBindings []admissionregistrationv1.ValidatingAdmissionPolicyBinding,
+	mapBindings []admissionregistrationv1alpha1.MutatingAdmissionPolicyBinding,
 	exceptions []*policiesv1alpha1.PolicyException,
 	policies ...engineapi.GenericPolicy,
 ) map[*engineapi.GenericPolicy]ScanResult {
-	var kpols, vpols, ivpols, vaps []engineapi.GenericPolicy
+	var kpols, vpols, ivpols, vaps, maps []engineapi.GenericPolicy
 	// split policies per nature
 	for _, policy := range policies {
 		if pol := policy.AsKyvernoPolicy(); pol != nil {
@@ -96,6 +99,8 @@ func (s *scanner) ScanResource(
 			ivpols = append(vpols, policy)
 		} else if pol := policy.AsValidatingAdmissionPolicy(); pol != nil {
 			vaps = append(vaps, policy)
+		} else if pol := policy.AsMutatingAdmissionPolicy(); pol != nil {
+			maps = append(maps, policy)
 		}
 	}
 	logger := s.logger.WithValues("kind", resource.GetKind(), "namespace", resource.GetNamespace(), "name", resource.GetName())
@@ -189,12 +194,16 @@ func (s *scanner) ScanResource(
 				false,
 				nil,
 			)
-			engineResponse, err := engine.Handle(ctx, request)
+			engineResponse, err := engine.Handle(ctx, request, nil)
+			rules := make([]engineapi.RuleResponse, 0)
+			for _, policy := range engineResponse.Policies {
+				rules = append(rules, policy.Rules...)
+			}
+
 			response := engineapi.EngineResponse{
 				Resource: resource,
 				PolicyResponse: engineapi.PolicyResponse{
-					// TODO: policies at index 0
-					Rules: engineResponse.Policies[0].Rules,
+					Rules: rules,
 				},
 			}.WithPolicy(vpols[i])
 			results[&vpols[i]] = ScanResult{&response, err}
@@ -240,7 +249,7 @@ func (s *scanner) ScanResource(
 				false,
 				nil,
 			)
-			engineResponse, _, err := engine.HandleMutating(ctx, request)
+			engineResponse, _, err := engine.HandleMutating(ctx, request, nil)
 			response := engineapi.EngineResponse{
 				Resource:       resource,
 				PolicyResponse: engineapi.PolicyResponse{},
@@ -256,13 +265,25 @@ func (s *scanner) ScanResource(
 	// evaluate validating admission policies
 	for i, policy := range vaps {
 		if policyData := policy.AsValidatingAdmissionPolicy(); policyData != nil {
-			for _, binding := range bindings {
+			for _, binding := range vapBindings {
 				if binding.Spec.PolicyName == policyData.GetDefinition().GetName() {
 					policyData.AddBinding(binding)
 				}
 			}
 			res, err := admissionpolicy.Validate(policyData, resource, resource.GroupVersionKind(), gvr, map[string]map[string]string{}, s.client, false)
 			results[&vaps[i]] = ScanResult{&res, err}
+		}
+	}
+	// evaluate mutating admission policies
+	for i, policy := range maps {
+		if policyData := policy.AsMutatingAdmissionPolicy(); policyData != nil {
+			for _, binding := range mapBindings {
+				if binding.Spec.PolicyName == policyData.GetDefinition().GetName() {
+					policyData.AddBinding(binding)
+				}
+			}
+			res, err := admissionpolicy.Mutate(policyData, resource, gvr, map[string]map[string]string{}, s.client, false, true)
+			results[&maps[i]] = ScanResult{&res, err}
 		}
 	}
 	return results

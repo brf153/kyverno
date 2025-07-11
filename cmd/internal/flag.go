@@ -41,6 +41,7 @@ var (
 	enablePolicyException  bool
 	exceptionNamespace     string
 	enableConfigMapCaching bool
+	openreportsEnabled     bool
 	// cosign
 	enableTUF  bool
 	tufMirror  string
@@ -64,6 +65,8 @@ var (
 	enableReporting string
 	// resync
 	resyncPeriod time.Duration
+	// custom resource watch
+	crdWatcher bool
 )
 
 func initLoggingFlags() {
@@ -104,6 +107,7 @@ func initKubeconfigFlags(qps float64, burst int, eventsQPS float64, eventsBurst 
 	flag.Float64Var(&eventsRateLimitQPS, "eventsRateLimitQPS", eventsQPS, "Configure the maximum QPS to the Kubernetes API server from Kyverno for events. Uses the client default if zero.")
 	flag.IntVar(&eventsRateLimitBurst, "eventsRateLimitBurst", eventsBurst, "Configure the maximum burst for throttle for events. Uses the client default if zero.")
 	flag.DurationVar(&resyncPeriod, "resyncPeriod", 15*time.Minute, "Configure the resync period for informer factory")
+	flag.BoolVar(&crdWatcher, "crdWatcher", false, "Enable watching of custom resources to invalidate discovery cache on changes.")
 }
 
 func initPolicyExceptionsFlags() {
@@ -148,6 +152,12 @@ func initCleanupFlags() {
 
 func initReportingFlags() {
 	flag.StringVar(&enableReporting, "enableReporting", "validate,mutate,mutateExisting,generate,imageVerify", "Comma separated list to enables reporting for different rule types. (validate,mutate,mutateExisting,generate,imageVerify)")
+}
+
+func initOpenreportsFlagSet() *flag.FlagSet {
+	flagset := flag.NewFlagSet("openreports", flag.ExitOnError)
+	flagset.BoolVar(&openreportsEnabled, "openreportsEnabled", false, "Use openreports.io/v1alpha1 for the reporting group")
+	return flagset
 }
 
 func lookupKubeconfigFlag() {
@@ -243,6 +253,11 @@ func initFlags(config Configuration, opts ...Option) {
 	if config.UsesReporting() {
 		initReportingFlags()
 	}
+
+	if config.UsesOpenreports() {
+		config.AddFlagSet(initOpenreportsFlagSet())
+	}
+
 	initCleanupFlags()
 	for _, flagset := range config.FlagSets() {
 		flagset.VisitAll(func(f *flag.Flag) {

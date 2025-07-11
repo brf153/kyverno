@@ -94,7 +94,7 @@ uOKpF5rWAruB5PCIrquamOejpXV9aQA/K2JQDuc0mcKz
 			},
 			Validations: []admissionregistrationv1.Validation{
 				{
-					Expression: "images.containers.map(i, image(i).registry() == \"ghcr.io\" ).all(e, e)",
+					Expression: "images.containers.map(i, parseImageReference(i).registry() == \"ghcr.io\" ).all(e, e)",
 					Message:    "images are not from ghcr registry",
 				},
 				{
@@ -164,7 +164,7 @@ func Test_ImageVerifyEngine(t *testing.T) {
 	}
 	engine := NewEngine(ProviderFunc(providerFunc), nsResolver, matching.NewMatcher(), nil, nil)
 
-	resp, patches, err := engine.HandleMutating(context.Background(), engineRequest)
+	resp, patches, err := engine.HandleMutating(context.Background(), engineRequest, nil)
 	assert.NoError(t, err)
 	assert.Equal(t, len(resp.Policies), 1)
 
